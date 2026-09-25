@@ -3,6 +3,7 @@ require 'faraday'
 module BusinessCalendar
   CountryNotSupported = Class.new(StandardError)
   OrganizationNotSupported = Class.new(StandardError)
+  HolidayDataUnavailable = Class.new(StandardError)
   class << self
     def for(country, options = {})
       if options["use_cached_calendar"]
@@ -20,7 +21,23 @@ module BusinessCalendar
       Calendar.new(holiday_determiner_for_endpoint(additions, removals, options), options)
     end
 
+    def for_endpoint!(additions, removals, options = {})
+      calendar = for_endpoint(additions, removals, options)
+      determiner = calendar.holiday_determiner
+
+      ensure_holiday_data_present!(determiner.additions, additions) if additions
+      ensure_holiday_data_present!(determiner.removals, removals) if removals
+
+      calendar
+    end
+
     private
+
+    def ensure_holiday_data_present!(dates, endpoint)
+      return unless dates.nil? || dates.empty?
+
+      raise HolidayDataUnavailable, "No holiday dates returned from #{endpoint.inspect}"
+    end
 
     def holiday_determiner(country)
       cfg = config(country) or raise CountryNotSupported.new(country.inspect)
@@ -45,7 +62,10 @@ module BusinessCalendar
     end
 
     def holiday_dates_for_endpoint(client, endpoint)
-      Proc.new { JSON.parse(client.get(endpoint).body).fetch('holidays').map { |s| Date.parse s } }
+      Proc.new do
+        holidays = JSON.parse(client.get(endpoint).body).fetch('holidays')
+        (holidays || []).map { |s| Date.parse s }
+      end
     end
 
     def holiday_determiner_for_endpoint(additions_endpoint, removals_endpoint, opts)
